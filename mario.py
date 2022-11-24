@@ -1,22 +1,39 @@
-
 import gym
 from gym import spaces
-
-
-import time
 
 import numpy as np
 
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from typing import List
+import torch.nn.functional as F
+import torch 
 
-STATES = [['MS' , '  ' , '  ' , '  ' , '  ' ],
-          ['  ' , '  ' , '  ' , '  ' , 'FB' ],
-          ['FF' , 'FF' , '  ' , 'CR' , '  ' ],
+
+STATES = [['MS' , '  ' , '  ' , 'FB' , '  ' ],
+          ['  ' , '  ' , '  ' , '  ' , '  ' ],
+          ['  ' , '  ' , '  ' , 'CR' , '  ' ],
+          ['FF' , 'FF' , '  ' , '  ' , '  ' ],
           ['  ' , '  ' , 'FB' , '  ' , '  ' ],
+          ['  ' , '  ' , '  ' , '  ' , '  ' ],
           ['FT' , '  ' , '  ' , '  ' , 'SR' ]]
 
+AUDIO  = [['( 1,  1, -4, -3)' , '( 1,  1, -3, -3)' , '( 1, 1, -2,  1)' , '( 1,  1,  1, 1)' , '(-2,  1,  1, 1)' ],
+          ['( 1,  1,  1, -2)' , '( 1,  1,  1, -2)' , '( 1, 1,  1, -4)' , '( 1, -2,  1, 1)' , '( 1,  1,  1, 1)' ],
+          ['( 1,  1,  1, -1)' , '( 1,  1,  1, -1)' , '( 1, 1,  1, -3)' , '( 1, -3,  1, 1)' , '( 1,  1,  1, 1)' ],
+          ['( 1,  1, -1,  1)' , '(-1,  1,  1,  1)' , '(-1, 1,  1, -2)' , '(-2, -4,  1, 1)' , '(-3,  1,  1, 1)' ],
+          ['( 1, -1, -3,  1)' , '( 1, -1, -2,  1)' , '( 1, 1,  1,  1)' , '(-2,  1,  1, 1)' , '(-3,  1,  1, 1)' ],
+          ['( 1, -2,  1,  1)' , '( 1, -2,  1,  1)' , '( 1,-2,  1,  1)' , '( 1,  1,  1, 1)' , '( 1,  1,  1, 1)' ],
+          ['( 1, -3,  1,  1)' , '( 1, -3,  1,  1)' , '( 1,-3,  1,  1)' , '( 1,  1,  1, 1)' , '( 1,  1,  1, 1)' ]]
+
+AUDIO_INTENSITY = {
+    1: 0,
+    0: 83,
+    -1: 72,
+    -2: 60,
+    -3: 50,
+    -4: 37
+    }
 ACTIONS = {
         0: ['L',(0,-1)], #Left
         1: ['U',(-1,0)], #Up
@@ -46,7 +63,6 @@ ICONS = {
         "10MS" : "./images/flag_goal_mario.png"
 
     }
-
 
 class MyMarioEnvironment(gym.Env):
     def __init__(self, environment:List[list]=STATES, actions:dict=ACTIONS, rewards:dict=REWARDS, p_transition:float=1.0, environment_type:str='deterministic'):
@@ -110,10 +126,10 @@ class MyMarioEnvironment(gym.Env):
                 if new_reward > 0:
                     self.reward_states_gained.append(self.state)
             self.states[self.current_pt[0]][self.current_pt[1]] = -5
-            self.observation = self.states.flatten()
+            self.observation = self._get_audio_observation(*self.current_pt) #self.states.flatten()
             self.reward_states_gained = [] if done else self.reward_states_gained
             info = {'action_performed':self.actions[self.current_action_index][0], 'prob':prob}
-        return self.state, self.new_reward, done, info
+        return self.observation, self.new_reward, done, info
         
     def reset(self):
         """Reset's the environment with initial values
@@ -124,8 +140,9 @@ class MyMarioEnvironment(gym.Env):
         self.timestep = 0
         self.states, self.start_pt, self.end_pt, self.current_pt, self.current_state = self._get_state_space(self.environment, self.rewards)
         self.state = self._get_state_from_xy(*self.current_pt)
-        self.observation = self.states.flatten()
-        return self.state
+        self.observation = self._get_audio_observation(*self.current_pt) #self.states.flatten()
+        
+        return self.observation
 
     def render(self, mode:str="rgb", icons:dict=ICONS):
         """Renders the environment
@@ -140,7 +157,7 @@ class MyMarioEnvironment(gym.Env):
         elif mode == "human":
             fig, ax = plt.subplots(figsize=(10, 10))
             ax.set_xlim(0, 5)
-            ax.set_ylim(0, 5)
+            ax.set_ylim(0, 7)
             im = plt.imread("./images/bg.jpg")
             im = ax.imshow(im)
             for r in range(self.env_row):
@@ -156,13 +173,19 @@ class MyMarioEnvironment(gym.Env):
                     else:
                         continue
 
-                    agent = AnnotationBbox(OffsetImage(plt.imread(img), zoom=0.5), np.add((c,4-r), [0.5, 0.5]), frameon=False)
+                    agent = AnnotationBbox(OffsetImage(plt.imread(img), zoom=0.5), np.add((c,6-r), [0.5, 0.5]), frameon=False)
                     ax.add_artist(agent)      
 
             plt.xticks([0, 1, 2, 3, 4])
-            plt.yticks([0, 1, 2, 3, 4])
+            plt.yticks([0, 1, 2, 3, 4, 5, 6])
             plt.grid()  
             plt.show()
+
+    def _get_audio_observation(self, current_x, current_y):
+        obs = eval(AUDIO[current_x][current_y])
+        obs = F.one_hot(torch.tensor(self._get_state_from_xy(current_x, current_y)), num_classes=35)
+        return obs
+        # return (self._get_state_from_xy(current_x, current_y), AUDIO_INTENSITY[obs[0]], AUDIO_INTENSITY[obs[1]], AUDIO_INTENSITY[obs[2]], AUDIO_INTENSITY[obs[3]])
 
     def _get_action_letter_map(self, actions):
         action_letter = {}
@@ -217,7 +240,11 @@ class MyMarioEnvironment(gym.Env):
     def _get_step_transition(self, current_pt, current_action):
         next_pt = self._get_next_pt(action=self.actions[current_action][1], pt = current_pt)
         new_state = self._get_state_from_xy(*next_pt)
-        reward = self._get_reward(next_pt)
+        if next_pt[0] == current_pt[0] and next_pt[1] == current_pt[1]:
+            r = -1
+        else:
+            r = 0
+        reward = r + self._get_reward(next_pt)
         done = True if np.array_equal(self.end_pt,next_pt) else False
         return next_pt, reward, done 
     
@@ -239,7 +266,3 @@ class MyMarioEnvironment(gym.Env):
                             if ac != a:
                                 li[ac] = [p_tran_others, *self._get_step_transition(np.array((row,col)),ac)]
         return T_M
-
-        
-
-                    
